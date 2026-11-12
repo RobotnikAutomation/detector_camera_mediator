@@ -7,6 +7,8 @@ detector whose state is READY; each detector has its own image input topic.
 Detector inputs use `object_detection_msgs/CameraFrame`: the resolved camera
 topic identifies the source independently of the unchanged image header.
 
+![Diagram of the mediator](./docs/detector_camera_mediator.png)
+
 ## Configure
 
 Edit `config/detector_camera_mediator.yaml` and list camera topics in order:
