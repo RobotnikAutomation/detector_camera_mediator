@@ -10,6 +10,7 @@ def load_mediator_module():
     rospy = types.ModuleType("rospy")
     rospy.Subscriber = lambda *args, **kwargs: None
     rospy.loginfo = lambda *args, **kwargs: None
+    rospy.resolve_name = lambda topic: topic if topic.startswith("/") else "/robot/" + topic
     robotnik_msgs = types.ModuleType("robotnik_msgs")
     robotnik_msgs_msg = types.ModuleType("robotnik_msgs.msg")
 
@@ -20,17 +21,12 @@ def load_mediator_module():
     sensor_msgs = types.ModuleType("sensor_msgs")
     sensor_msgs_msg = types.ModuleType("sensor_msgs.msg")
     sensor_msgs_msg.Image = type("Image", (), {})
-    object_detection_msgs = types.ModuleType("object_detection_msgs")
-    object_detection_msgs_msg = types.ModuleType("object_detection_msgs.msg")
-    object_detection_msgs_msg.CameraFrame = types.SimpleNamespace
     modules = {
         "rospy": rospy,
         "robotnik_msgs": robotnik_msgs,
         "robotnik_msgs.msg": robotnik_msgs_msg,
         "sensor_msgs": sensor_msgs,
         "sensor_msgs.msg": sensor_msgs_msg,
-        "object_detection_msgs": object_detection_msgs,
-        "object_detection_msgs.msg": object_detection_msgs_msg,
     }
 
     script_path = Path(__file__).parents[1] / "scripts" / "detector_camera_mediator_node.py"
@@ -54,23 +50,31 @@ class DetectorRoutingTests(unittest.TestCase):
         discovery = self.mediator_module.ActiveModelDiscovery(registry, 5.0)
         ready = types.SimpleNamespace(state=self.State.READY_STATE)
 
-        first_publisher = types.SimpleNamespace(published=[])
-        first_publisher.publish = first_publisher.published.append
-        second_publisher = types.SimpleNamespace(published=[])
-        second_publisher.publish = second_publisher.published.append
+        publishers = {}
+        for detector_name in ("first", "second"):
+            publisher = types.SimpleNamespace(published=[])
+            publisher.publish = publisher.published.append
+            publishers[detector_name] = publisher
         mediator = self.mediator_module.DetectorCameraMediator.__new__(
             self.mediator_module.DetectorCameraMediator
         )
         mediator.model_discovery = discovery
-        mediator._image_publishers = {"first": first_publisher, "second": second_publisher}
+        mediator._image_publishers = publishers
 
         with patch.object(self.mediator_module.time, "monotonic", side_effect=[10.0, 10.0, 10.1, 16.0]):
             discovery.update_from_status("first", ready)
             discovery.update_from_status("second", ready)
-            self.assertTrue(mediator._publish_frame("frame-1"))
-            self.assertEqual(first_publisher.published, ["frame-1"])
-            self.assertEqual(second_publisher.published, ["frame-1"])
-            self.assertFalse(mediator._publish_frame("frame-2"))
+            image = types.SimpleNamespace(header=types.SimpleNamespace(stamp=10, frame_id="camera"))
+            self.assertTrue(mediator._publish_frame("/robot/front/image_raw", image))
+            first_routed = publishers["first"].published[0]
+            second_routed = publishers["second"].published[0]
+            self.assertEqual(first_routed.header.frame_id, "/robot/front/image_raw")
+            self.assertEqual(second_routed.header.frame_id, "/robot/front/image_raw")
+            self.assertEqual(first_routed.header.stamp, 10)
+            self.assertEqual(image.header.frame_id, "camera")
+            self.assertIsNot(first_routed, image)
+            self.assertIs(first_routed, second_routed)
+            self.assertFalse(mediator._publish_frame("/robot/front/image_raw", image))
 
     def test_non_ready_state_removes_detector(self):
         registry = [{"name": "first", "state_topic": "/first/state", "image_topic": "/first/image"}]
@@ -80,19 +84,18 @@ class DetectorRoutingTests(unittest.TestCase):
 
         self.assertEqual(discovery.ready_detectors(), ())
 
-    def test_run_tags_frame_with_resolved_camera_topic(self):
+    def test_run_forwards_image_without_changing_header(self):
         mediator = self.mediator_module.DetectorCameraMediator.__new__(
             self.mediator_module.DetectorCameraMediator)
         image = types.SimpleNamespace(header=types.SimpleNamespace(stamp=42, frame_id="shared"))
         published = []
         mediator._next_frame = lambda: ("camera/image_raw", image)
-        mediator._publish_frame = published.append
+        mediator._publish_frame = lambda camera_topic, frame: published.append((camera_topic, frame))
         with patch.object(self.mediator_module.rospy, "is_shutdown", side_effect=[False, True], create=True), \
-                patch.object(self.mediator_module.rospy, "resolve_name", return_value="/robot/camera/image_raw", create=True), \
                 patch.object(self.mediator_module.rospy, "logdebug", create=True):
             mediator.run()
-        self.assertEqual(published[0].camera_topic, "/robot/camera/image_raw")
-        self.assertIs(published[0].image, image)
+        self.assertEqual(published[0][0], "camera/image_raw")
+        self.assertIs(published[0][1], image)
         self.assertEqual(image.header.stamp, 42)
         self.assertEqual(image.header.frame_id, "shared")
 

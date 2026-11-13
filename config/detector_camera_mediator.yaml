@@ -12,13 +12,13 @@ frame_queue_size: 2
 detector_registry:
   - name: person_detector
     state_topic: "/robot/detectors/person_detector/state"
-    image_topic: "/robot/detectors/person_detector/image_raw"
+    image_topic: "/robot/detectors/person_detector/image"
   - name: broken_fence_detector
     state_topic: "/robot/detectors/broken_fence_detector/state"
-    image_topic: "/robot/detectors/broken_fence_detector/image_raw"
+    image_topic: "/robot/detectors/broken_fence_detector/image"
   - name: vehicle_detector
     state_topic: "/robot/detectors/vehicle_detector/state"
-    image_topic: "/robot/detectors/vehicle_detector/image_raw"
+    image_topic: "/robot/detectors/vehicle_detector/image"
   - name: multiclass_detector
     state_topic: "/robot/detectors/multiclass_detector/state"
     image_topic: "/robot/detectors/multiclass_detector/image_raw"

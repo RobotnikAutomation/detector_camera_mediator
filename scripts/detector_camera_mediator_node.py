@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 from collections import deque
+import copy
 import threading
 import time
 
 import rospy
-from object_detection_msgs.msg import CameraFrame
 from robotnik_msgs.msg import State
 from sensor_msgs.msg import Image
 
@@ -98,9 +98,7 @@ class DetectorCameraMediator:
             detector_registry, self.status_timeout
         )
         self._image_publishers = {
-            detector["name"]: rospy.Publisher(
-                detector["image_topic"], CameraFrame, queue_size=1
-            )
+            detector["name"]: rospy.Publisher(detector["image_topic"], Image, queue_size=1)
             for detector in detector_registry
         }
         self._condition = threading.Condition()
@@ -150,11 +148,15 @@ class DetectorCameraMediator:
 
         return None
 
-    def _publish_frame(self, frame):
-        """Publish a frame once to each detector with fresh READY status."""
+    def _publish_frame(self, camera_topic, frame):
+        """Forward an image with its source topic to each fresh READY detector."""
         ready_detectors = self.model_discovery.ready_detectors()
+        if not ready_detectors:
+            return False
+        routed_frame = copy.deepcopy(frame)
+        routed_frame.header.frame_id = rospy.resolve_name(camera_topic)
         for detector_name in ready_detectors:
-            self._image_publishers[detector_name].publish(frame)
+            self._image_publishers[detector_name].publish(routed_frame)
         return bool(ready_detectors)
 
     def run(self):
@@ -163,8 +165,7 @@ class DetectorCameraMediator:
             next_frame = self._next_frame()
             if next_frame is not None:
                 topic, frame = next_frame
-                self._publish_frame(CameraFrame(
-                    camera_topic=rospy.resolve_name(topic), image=frame))
+                self._publish_frame(topic, frame)
                 rospy.logdebug("Processed frame from %s", topic)
 
 
