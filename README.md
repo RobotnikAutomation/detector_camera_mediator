@@ -4,9 +4,10 @@ ROS 1 node that subscribes to configured `sensor_msgs/Image` camera topics,
 queues frames per camera, and processes them round-robin. Old queued frames are
 dropped when a camera queue is full. Each frame is published to every configured
 detector whose state is READY; each detector has its own image input topic.
-The mediator copies each `sensor_msgs/Image`, keeps its timestamp, and writes
-the resolved source camera topic to `header.frame_id` before forwarding. The
-original camera message is unchanged.
+The mediator publishes `object_detection_msgs/CameraFrame` messages containing
+the resolved source camera topic in `camera_topic` and the original
+`sensor_msgs/Image` in `image`. The image header, including its timestamp and
+coordinate frame, is unchanged.
 
 ![Diagram of the mediator](./docs/detector_camera_mediator.png)
 
@@ -45,13 +46,14 @@ when full. Each registry entry must have a unique detector `name`, its
 receives frames while it reports `READY_STATE` (300); READY expires if no state
 update arrives before `model_status_timeout`.
 
-Detectors need no camera-specific configuration. They receive ordinary images
-on one input topic and publish bounding boxes on one output topic. The bbox
-array header retains the mediator's source-topic `frame_id` and original image
-timestamp for the annotator.
+Detectors need no camera-specific configuration. They receive `CameraFrame`
+messages on one input topic and publish `object_detection_msgs/CameraDetections`
+on `camera_detections` for the annotator. The wrapper carries the source camera
+topic separately from the unchanged image header. The standard `bounding_boxes`
+output remains a `vision_msgs/Detection2DArray` for other consumers.
 
 When launched through `inspection_bringup`, the node loads
-`inspection_bringup/config/utils/detector_camera_mediator.yaml` instead of this
+`inspection_bringup/config/ai_perception/detector_camera_mediator.yaml` instead of this
 package's copy. Keep the two files aligned when changing the shared routing
 configuration.
 

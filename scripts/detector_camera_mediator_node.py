@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 from collections import deque
-import copy
 import threading
 import time
 
 import rospy
+from object_detection_msgs.msg import CameraFrame
 from robotnik_msgs.msg import State
 from sensor_msgs.msg import Image
 
@@ -98,7 +98,7 @@ class DetectorCameraMediator:
             detector_registry, self.status_timeout
         )
         self._image_publishers = {
-            detector["name"]: rospy.Publisher(detector["image_topic"], Image, queue_size=1)
+            detector["name"]: rospy.Publisher(detector["image_topic"], CameraFrame, queue_size=1)
             for detector in detector_registry
         }
         self._condition = threading.Condition()
@@ -153,8 +153,9 @@ class DetectorCameraMediator:
         ready_detectors = self.model_discovery.ready_detectors()
         if not ready_detectors:
             return False
-        routed_frame = copy.deepcopy(frame)
-        routed_frame.header.frame_id = rospy.resolve_name(camera_topic)
+        routed_frame = CameraFrame(
+            camera_topic=rospy.resolve_name(camera_topic), image=frame
+        )
         for detector_name in ready_detectors:
             self._image_publishers[detector_name].publish(routed_frame)
         return bool(ready_detectors)
