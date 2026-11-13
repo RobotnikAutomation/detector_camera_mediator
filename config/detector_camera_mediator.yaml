@@ -8,14 +8,26 @@ camera_topics: [
 # Maximum number of pending frames to retain per camera; oldest frames are dropped first.
 frame_queue_size: 2
 
-# Shared image input for all detectors.
-output_topic: "/robot/detectors/image_raw"
+# Maximum work dispatches per second across all cameras.
+processing_rate_hz: 10.0
 
-# Model state topics; only models reporting READY_STATE are considered active.
-model_status_interfaces: [
-  "/robot/detectors/person_detector/state",
-  "/robot/detectors/broken_fence_detector/state",
-  "/robot/detectors/vehicle_detector/state",
-  "/robot/detectors/multiclass_detector/state",
-  "/robot/detectors/fire_detector/state"
-]
+# A detector receives frames on its image_topic only while its state is READY.
+detector_registry:
+  - name: person_detector
+    state_topic: "/robot/detectors/person_detector/state"
+    image_topic: "/robot/detectors/person_detector/image"
+  - name: broken_fence_detector
+    state_topic: "/robot/detectors/broken_fence_detector/state"
+    image_topic: "/robot/detectors/broken_fence_detector/image"
+  - name: vehicle_detector
+    state_topic: "/robot/detectors/vehicle_detector/state"
+    image_topic: "/robot/detectors/vehicle_detector/image"
+  - name: multiclass_detector
+    state_topic: "/robot/detectors/multiclass_detector/state"
+    image_topic: "/robot/detectors/multiclass_detector/image_raw"
+  - name: fire_detector
+    state_topic: "/robot/detectors/fire_detector/state"
+    image_topic: "/robot/detectors/fire_detector/image_raw"
+
+# READY is considered stale if no state update arrives within this interval.
+model_status_timeout: 5.0
