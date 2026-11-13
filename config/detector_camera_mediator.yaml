@@ -8,6 +8,9 @@ camera_topics: [
 # Maximum number of pending frames to retain per camera; oldest frames are dropped first.
 frame_queue_size: 2
 
+# Maximum work dispatches per second across all cameras.
+processing_rate_hz: 10.0
+
 # A detector receives frames on its image_topic only while its state is READY.
 detector_registry:
   - name: person_detector

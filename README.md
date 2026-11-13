@@ -4,6 +4,11 @@ ROS 1 node that subscribes to configured `sensor_msgs/Image` camera topics,
 queues frames per camera, and processes them round-robin. Old queued frames are
 dropped when a camera queue is full. Each frame is published to every configured
 detector whose state is READY; each detector has its own image input topic.
+Dispatch runs at a configurable fixed rate across all cameras; the default is
+10 frames per second total, with at most one selected camera frame per tick.
+Every five seconds, the mediator publishes a JSON status message on
+`/detector_camera_mediator/status` with the configured rate and the names/count
+of detectors currently READY.
 The mediator publishes `object_detection_msgs/CameraFrame` messages containing
 the resolved source camera topic in `camera_topic` and the original
 `sensor_msgs/Image` in `image`. The image header, including its timestamp and
@@ -24,6 +29,7 @@ camera_topics:
   - /robot/top_ptz_camera/thermal/image_raw
 
 frame_queue_size: 2
+processing_rate_hz: 10.0
 
 detector_registry:
   - name: person_detector
@@ -41,7 +47,8 @@ model_status_timeout: 5.0
 
 `camera_topics` order is the round-robin processing order. `frame_queue_size`
 is the maximum number of pending images per camera, with the oldest dropped
-when full. Each registry entry must have a unique detector `name`, its
+when full. `processing_rate_hz` sets the dispatch rate across all cameras, not
+per camera. Each registry entry must have a unique detector `name`, its
 `robotnik_msgs/State` `state_topic`, and dedicated `image_topic`. A detector
 receives frames while it reports `READY_STATE` (300); READY expires if no state
 update arrives before `model_status_timeout`.

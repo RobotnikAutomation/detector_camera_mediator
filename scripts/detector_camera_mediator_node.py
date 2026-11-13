@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from collections import deque
+import json
 import threading
 import time
 
@@ -8,6 +9,7 @@ import rospy
 from object_detection_msgs.msg import CameraFrame
 from robotnik_msgs.msg import State
 from sensor_msgs.msg import Image
+from std_msgs.msg import String
 
 
 class ActiveModelDiscovery:
@@ -69,11 +71,14 @@ class DetectorCameraMediator:
         camera_topics = rospy.get_param("~camera_topics", [])
         self.camera_topics = list(dict.fromkeys(camera_topics))
         self.queue_size = int(rospy.get_param("~frame_queue_size", 2))
+        self.processing_rate_hz = float(rospy.get_param("~processing_rate_hz", 10.0))
         detector_registry = rospy.get_param("~detector_registry", [])
         self.status_timeout = float(rospy.get_param("~model_status_timeout", 5.0))
 
         if self.queue_size < 1:
             raise ValueError("~frame_queue_size must be at least 1")
+        if self.processing_rate_hz <= 0:
+            raise ValueError("~processing_rate_hz must be greater than 0")
         if self.status_timeout <= 0:
             raise ValueError("~model_status_timeout must be greater than 0")
         if not isinstance(detector_registry, list):
@@ -101,6 +106,10 @@ class DetectorCameraMediator:
             detector["name"]: rospy.Publisher(detector["image_topic"], CameraFrame, queue_size=1)
             for detector in detector_registry
         }
+        self._status_publisher = rospy.Publisher("~status", String, queue_size=1)
+        self._status_timer = rospy.Timer(
+            rospy.Duration(5.0), self._publish_status
+        )
         self._condition = threading.Condition()
         self._next_camera_index = 0
         self._subscribers = [
@@ -133,18 +142,15 @@ class DetectorCameraMediator:
         return enqueue_frame
 
     def _next_frame(self):
-        """Return the next available frame in round-robin camera order."""
+        """Return the next available frame in round-robin camera order, if any."""
         with self._condition:
-            while not rospy.is_shutdown():
-                topic_count = len(self.camera_topics)
-                for offset in range(topic_count):
-                    index = (self._next_camera_index + offset) % topic_count
-                    topic = self.camera_topics[index]
-                    if self._queues[topic]:
-                        self._next_camera_index = (index + 1) % topic_count
-                        return topic, self._queues[topic].popleft()
-
-                self._condition.wait(timeout=0.1)
+            topic_count = len(self.camera_topics)
+            for offset in range(topic_count):
+                index = (self._next_camera_index + offset) % topic_count
+                topic = self.camera_topics[index]
+                if self._queues[topic]:
+                    self._next_camera_index = (index + 1) % topic_count
+                    return topic, self._queues[topic].popleft()
 
         return None
 
@@ -160,14 +166,26 @@ class DetectorCameraMediator:
             self._image_publishers[detector_name].publish(routed_frame)
         return bool(ready_detectors)
 
+    def _publish_status(self, _event=None):
+        """Publish the configured work rate and currently READY detectors."""
+        active_detectors = self.model_discovery.ready_detectors()
+        status = {
+            "processing_rate_hz": self.processing_rate_hz,
+            "active_detector_count": len(active_detectors),
+            "active_detectors": active_detectors,
+        }
+        self._status_publisher.publish(String(data=json.dumps(status)))
+
     def run(self):
-        """Drain queued frames until ROS shuts down."""
+        """Dispatch at most one queued frame per processing-rate tick."""
+        rate = rospy.Rate(self.processing_rate_hz)
         while not rospy.is_shutdown():
             next_frame = self._next_frame()
             if next_frame is not None:
                 topic, frame = next_frame
                 self._publish_frame(topic, frame)
                 rospy.logdebug("Processed frame from %s", topic)
+            rate.sleep()
 
 
 def main():
