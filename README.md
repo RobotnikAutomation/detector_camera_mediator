@@ -1,72 +1,75 @@
 # detector_camera_mediator
 
-ROS 1 node that subscribes to configured `sensor_msgs/Image` camera topics,
-queues frames per camera, and processes them round-robin. Old queued frames are
-dropped when a camera queue is full. Each frame is published to every configured
-detector whose state is READY; each detector has its own image input topic.
-Dispatch runs at a configurable fixed rate across all cameras; the default is
-10 frames per second total, with at most one selected camera frame per tick.
-Every five seconds, the mediator publishes a JSON status message on
-`/detector_camera_mediator/status` with the configured rate and the names/count
-of detectors currently READY.
-The mediator publishes `object_detection_msgs/CameraFrame` messages containing
-the resolved source camera topic in `camera_topic` and the original
-`sensor_msgs/Image` in `image`. The image header, including its timestamp and
-coordinate frame, is unchanged.
+ROS node that routes camera images to READY detectors. It queues frames per
+camera, drops the oldest when a queue is full, and dispatches round-robin at a
+configurable total rate (10 Hz by default, at most one frame per tick).
+Each detector receives an `object_detection_msgs/CameraFrame` with the resolved
+source topic in `camera_topic` and the original image in `image`. Status is
+published as JSON every five seconds on `/detector_camera_mediator/status`.
 
 ![Diagram of the mediator](./docs/detector_camera_mediator.png)
 
+## Related packages
+
+- [object_detection](https://github.com/RobotnikAutomation/object_detection)
+
 ## Configure
 
-Edit `config/detector_camera_mediator.yaml` to set the image inputs, queue
-capacity, and detector routing registry. These are all read by the node; no
-unused keys were found. The current configuration is:
+Edit `config/detector_camera_mediator.yaml` to configure cameras, queue size,
+dispatch rate, and detector topics:
 
 ```yaml
-camera_topics:
-  - /robot/front_rgbd_camera/color/image_raw
-  - /robot/top_ptz_camera/color/image_raw
-  - /robot/top_ptz_camera/thermal/image_raw
+# Camera topics are processed in the order listed.
+camera_topics: [
+  "/robot/front_rgbd_camera/color/image_raw",
+  "/robot/top_ptz_camera/color/image_raw",
+  "/robot/top_ptz_camera/thermal/image_raw"
+]
 
+# Maximum number of pending frames to retain per camera; oldest frames are dropped first.
 frame_queue_size: 2
+
+# Maximum work dispatches per second across all cameras.
 processing_rate_hz: 10.0
 
+# A detector receives frames on its image_topic only while its state is READY.
 detector_registry:
   - name: person_detector
-    state_topic: /robot/detectors/person_detector/state
-    image_topic: /robot/detectors/person_detector/image
+    state_topic: "/robot/detectors/person_detector/state"
+    image_topic: "/robot/detectors/person_detector/image"
   - name: broken_fence_detector
-    state_topic: /robot/detectors/broken_fence_detector/state
-    image_topic: /robot/detectors/broken_fence_detector/image
+    state_topic: "/robot/detectors/broken_fence_detector/state"
+    image_topic: "/robot/detectors/broken_fence_detector/image"
   - name: vehicle_detector
-    state_topic: /robot/detectors/vehicle_detector/state
-    image_topic: /robot/detectors/vehicle_detector/image
+    state_topic: "/robot/detectors/vehicle_detector/state"
+    image_topic: "/robot/detectors/vehicle_detector/image"
+  - name: multiclass_detector
+    state_topic: "/robot/detectors/multiclass_detector/state"
+    image_topic: "/robot/detectors/multiclass_detector/image_raw"
+  - name: fire_detector
+    state_topic: "/robot/detectors/fire_detector/state"
+    image_topic: "/robot/detectors/fire_detector/image_raw"
 
+# READY is considered stale if no state update arrives within this interval.
 model_status_timeout: 5.0
 ```
 
-`camera_topics` order is the round-robin processing order. `frame_queue_size`
-is the maximum number of pending images per camera, with the oldest dropped
-when full. `processing_rate_hz` sets the dispatch rate across all cameras, not
-per camera. Each registry entry must have a unique detector `name`, its
-`robotnik_msgs/State` `state_topic`, and dedicated `image_topic`. A detector
-receives frames while it reports `READY_STATE` (300); READY expires if no state
-update arrives before `model_status_timeout`.
+Camera order determines round-robin order. Each detector entry requires a
+unique `name`, a `robotnik_msgs/State` `state_topic`, and an `image_topic`.
+Frames are routed while its state is `READY_STATE` (300); READY expires after
+`model_status_timeout` without an update.
 
-Detectors need no camera-specific configuration. They receive `CameraFrame`
-messages on one input topic and publish `object_detection_msgs/CameraDetections`
-on `camera_detections` for the annotator. The wrapper carries the source camera
-topic separately from the unchanged image header. The standard `bounding_boxes`
-output remains a `vision_msgs/Detection2DArray` for other consumers.
+Detectors publish `object_detection_msgs/CameraDetections` on
+`camera_detections` for the annotator. The standard `bounding_boxes` output
+remains a `vision_msgs/Detection2DArray`.
 
-When launched through `inspection_bringup`, the node loads
-`inspection_bringup/config/ai_perception/detector_camera_mediator.yaml` instead of this
-package's copy. Keep the two files aligned when changing the shared routing
-configuration.
+`inspection_bringup` uses
+`inspection_bringup/config/ai_perception/detector_camera_mediator.yaml` instead
+of this package's config. Keep both files aligned.
 
 ## Build and run
 
-From the root of a ROS 1 catkin workspace containing this package:
+From a ROS catkin workspace:
 
 ```bash
 catkin_make
@@ -74,12 +77,6 @@ source devel/setup.bash
 roslaunch detector_camera_mediator detector_camera_mediator.launch
 ```
 
-The node does not start or stop models.
-
-Model memory is managed by the `object_detection` detector controllers, through
-their existing `activate_detector` services (directly or through the detector
-manager). Activation loads the configured model in a child process;
-deactivation stops and joins that process while leaving the ROS controller
-available for later reactivation. A detector reports READY only after loading
-and subscribing to its image input. The mediator's READY tracking remains an
-image-routing decision, not a model lifecycle trigger.
+The mediator only routes images; it does not manage model lifecycle. The
+`object_detection` controllers manage models through their `activate_detector`
+services and report READY after loading and subscribing to the image input.
