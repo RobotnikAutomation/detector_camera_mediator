@@ -158,10 +158,6 @@ class DetectorCameraMediator:
                 camera_queue = self._queues[camera_name]
                 if len(camera_queue) >= self.queue_size:
                     camera_queue.popleft()
-                    rospy.logwarn_throttle(
-                        5.0,
-                        "Dropping oldest queued frame from %s", camera_name
-                    )
                 camera_queue.append(frame)
                 self._condition.notify()
 
@@ -214,7 +210,6 @@ class DetectorCameraMediator:
             if next_frame is not None:
                 camera_name, frame = next_frame
                 self._publish_frame(camera_name, frame)
-                rospy.logdebug("Processed frame from %s", camera_name)
             rate.sleep()
 
 
