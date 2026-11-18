@@ -15,16 +15,14 @@ published as JSON every five seconds on `/detector_camera_mediator/status`.
 
 ## Configure
 
-Edit `config/detector_camera_mediator.yaml` to configure cameras, queue size,
-dispatch rate, and detector topics:
+Edit `config/detector_camera_mediator.yaml` to set the named camera inputs,
+queue capacity, and detector routing registry. The current configuration is:
 
 ```yaml
-# Camera topics are processed in the order listed.
-camera_topics: [
-  "/robot/front_rgbd_camera/color/image_raw",
-  "/robot/top_ptz_camera/color/image_raw",
-  "/robot/top_ptz_camera/thermal/image_raw"
-]
+camera_topics:
+  front: /robot/front_rgbd_camera/color/image_raw
+  top: /robot/top_ptz_camera/color/image_raw
+  thermal: /robot/top_ptz_camera/thermal/image_raw
 
 # Maximum number of pending frames to retain per camera; oldest frames are dropped first.
 frame_queue_size: 2
@@ -35,33 +33,44 @@ processing_rate_hz: 10.0
 # A detector receives frames on its image_topic only while its state is READY.
 detector_registry:
   - name: person_detector
-    state_topic: "/robot/detectors/person_detector/state"
-    image_topic: "/robot/detectors/person_detector/image"
+    state_topic: /robot/detectors/person_detector/state
+    image_topic: /robot/detectors/person_detector/image
+    camera_topics: [top]
   - name: broken_fence_detector
-    state_topic: "/robot/detectors/broken_fence_detector/state"
-    image_topic: "/robot/detectors/broken_fence_detector/image"
+    state_topic: /robot/detectors/broken_fence_detector/state
+    image_topic: /robot/detectors/broken_fence_detector/image
+    camera_topics: [front, thermal]
   - name: vehicle_detector
-    state_topic: "/robot/detectors/vehicle_detector/state"
-    image_topic: "/robot/detectors/vehicle_detector/image"
+    state_topic: /robot/detectors/vehicle_detector/state
+    image_topic: /robot/detectors/vehicle_detector/image
+    camera_topics: [front]
   - name: multiclass_detector
-    state_topic: "/robot/detectors/multiclass_detector/state"
-    image_topic: "/robot/detectors/multiclass_detector/image_raw"
+    state_topic: /robot/detectors/multiclass_detector/state
+    image_topic: /robot/detectors/multiclass_detector/image_raw
+    camera_topics: [top]
   - name: fire_detector
-    state_topic: "/robot/detectors/fire_detector/state"
-    image_topic: "/robot/detectors/fire_detector/image_raw"
+    state_topic: /robot/detectors/fire_detector/state
+    image_topic: /robot/detectors/fire_detector/image_raw
+    camera_topics: [thermal]
 
 # READY is considered stale if no state update arrives within this interval.
 model_status_timeout: 5.0
 ```
 
-Camera order determines round-robin order. Each detector entry requires a
-unique `name`, a `robotnik_msgs/State` `state_topic`, and an `image_topic`.
-Frames are routed while its state is `READY_STATE` (300); READY expires after
-`model_status_timeout` without an update.
+`camera_topics` maps camera names to ROS image topics. Each detector's `camera_topics` list selects
+which named cameras it receives. `frame_queue_size` is the maximum number of
+pending images per camera, with the oldest dropped when full.
+`processing_rate_hz` sets the dispatch rate across all cameras, not per camera.
+Each registry entry must have a unique detector `name`, its `robotnik_msgs/State`
+`state_topic`, dedicated `image_topic`, and valid camera names. A detector
+receives frames while it reports `READY_STATE` (300); READY expires if no state
+update arrives before `model_status_timeout`.
 
-Detectors publish `object_detection_msgs/CameraDetections` on
-`camera_detections` for the annotator. The standard `bounding_boxes` output
-remains a `vision_msgs/Detection2DArray`.
+Detectors receive `CameraFrame` messages on one input topic and publish
+`object_detection_msgs/CameraDetections`
+on `camera_detections` for the annotator. The wrapper carries the source camera
+topic separately from the unchanged image header. The standard `bounding_boxes`
+output remains a `vision_msgs/Detection2DArray` for other consumers.
 
 `inspection_bringup` uses
 `inspection_bringup/config/ai_perception/detector_camera_mediator.yaml` instead

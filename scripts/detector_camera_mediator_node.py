@@ -68,8 +68,15 @@ class DetectorCameraMediator:
 
     def __init__(self):
         """Load camera settings and create one subscriber per topic."""
-        camera_topics = rospy.get_param("~camera_topics", [])
-        self.camera_topics = list(dict.fromkeys(camera_topics))
+        camera_topics = rospy.get_param("~camera_topics", {})
+        if not isinstance(camera_topics, dict) or any(
+            not isinstance(name, str) or not name
+            or not isinstance(topic, str) or not topic
+            for name, topic in camera_topics.items()
+        ):
+            raise ValueError("~camera_topics must map camera names to topic strings")
+        self.camera_topics = dict(camera_topics)
+        camera_names = list(self.camera_topics)
         self.queue_size = int(rospy.get_param("~frame_queue_size", 2))
         self.processing_rate_hz = float(rospy.get_param("~processing_rate_hz", 10.0))
         detector_registry = rospy.get_param("~detector_registry", [])
@@ -96,8 +103,27 @@ class DetectorCameraMediator:
         if len(set(detector_names)) != len(detector_names):
             raise ValueError("~detector_registry names must be unique")
 
+        # Validate camera names in detectors
+        self._detector_cameras = {}
+        for detector in detector_registry:
+            detector_name = detector["name"]
+            cameras = detector.get("camera_topics", [])
+            if not isinstance(cameras, list) or any(
+                not isinstance(camera, str) for camera in cameras
+            ):
+                raise ValueError(
+                    f"Detector '{detector_name}' camera_topics must be a list of camera names"
+                )
+            for camera in cameras:
+                if camera not in self.camera_topics:
+                    raise ValueError(
+                        f"Detector '{detector_name}' references unknown camera topic '{camera}'"
+                    )
+            self._detector_cameras[detector_name] = tuple(cameras)
+
+        # Initialize
         self._queues = {
-            topic: deque() for topic in self.camera_topics
+            camera_name: deque() for camera_name in camera_names
         }
         self.model_discovery = ActiveModelDiscovery(
             detector_registry, self.status_timeout
@@ -116,25 +142,25 @@ class DetectorCameraMediator:
             rospy.Subscriber(
                 topic,
                 Image,
-                self._make_callback(topic),
+                self._make_callback(camera_name),
                 queue_size=1,
             )
-            for topic in self.camera_topics
+            for camera_name, topic in self.camera_topics.items()
         ]
 
         if not self.camera_topics:
             rospy.logwarn("No camera topics configured")
 
-    def _make_callback(self, camera_topic):
+    def _make_callback(self, camera_name):
         """Return a callback that enqueues frames for one camera."""
         def enqueue_frame(frame):
             with self._condition:
-                camera_queue = self._queues[camera_topic]
+                camera_queue = self._queues[camera_name]
                 if len(camera_queue) >= self.queue_size:
                     camera_queue.popleft()
                     rospy.logwarn_throttle(
                         5.0,
-                        "Dropping oldest queued frame from %s", camera_topic
+                        "Dropping oldest queued frame from %s", camera_name
                     )
                 camera_queue.append(frame)
                 self._condition.notify()
@@ -144,27 +170,31 @@ class DetectorCameraMediator:
     def _next_frame(self):
         """Return the next available frame in round-robin camera order, if any."""
         with self._condition:
-            topic_count = len(self.camera_topics)
+            camera_names = tuple(self.camera_topics)
+            topic_count = len(camera_names)
             for offset in range(topic_count):
                 index = (self._next_camera_index + offset) % topic_count
-                topic = self.camera_topics[index]
-                if self._queues[topic]:
+                camera_name = camera_names[index]
+                if self._queues[camera_name]:
                     self._next_camera_index = (index + 1) % topic_count
-                    return topic, self._queues[topic].popleft()
+                    return camera_name, self._queues[camera_name].popleft()
 
         return None
 
-    def _publish_frame(self, camera_topic, frame):
+    def _publish_frame(self, camera_name, frame):
         """Forward an image with its source topic to each fresh READY detector."""
         ready_detectors = self.model_discovery.ready_detectors()
         if not ready_detectors:
             return False
         routed_frame = CameraFrame(
-            camera_topic=rospy.resolve_name(camera_topic), image=frame
+            camera_topic=rospy.resolve_name(self.camera_topics[camera_name]), image=frame
         )
+        published = False
         for detector_name in ready_detectors:
-            self._image_publishers[detector_name].publish(routed_frame)
-        return bool(ready_detectors)
+            if camera_name in self._detector_cameras[detector_name]:
+                self._image_publishers[detector_name].publish(routed_frame)
+                published = True
+        return published
 
     def _publish_status(self, _event=None):
         """Publish the configured work rate and currently READY detectors."""
@@ -182,9 +212,9 @@ class DetectorCameraMediator:
         while not rospy.is_shutdown():
             next_frame = self._next_frame()
             if next_frame is not None:
-                topic, frame = next_frame
-                self._publish_frame(topic, frame)
-                rospy.logdebug("Processed frame from %s", topic)
+                camera_name, frame = next_frame
+                self._publish_frame(camera_name, frame)
+                rospy.logdebug("Processed frame from %s", camera_name)
             rate.sleep()
 
 
